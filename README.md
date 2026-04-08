@@ -56,3 +56,4 @@ python run_evaluations.py --evaluator correctness --chunk-size 500 --k 10
 - Supported file types: `.pdf`, `.docx`, `.txt`.
 - For production, add persistence for chat history and auth; consider cleanup of old session directories.
 
+ 
