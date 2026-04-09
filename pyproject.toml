@@ -22,8 +22,14 @@ dependencies = [
     "langsmith>=0.4.28",
     "openai>=1.107.3",
     "pandas>=2.3.3",
+    "pypdf>=4.0.0",
     "python-dotenv==1.1.1",
     "python-multipart==0.0.20",
     "structlog>=25.4.0",
     "uvicorn==0.32.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
 ]
