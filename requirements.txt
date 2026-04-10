@@ -10,6 +10,7 @@ langchain-google-genai==2.1.8
 langchain-openai==0.2.10
 
 docx2txt==0.9
+pypdf>=4.0.0
 ipykernel==6.30.0
 python-multipart==0.0.20
 faiss-cpu
