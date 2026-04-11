@@ -31,8 +31,11 @@ RUN uv pip install --system -r requirements.txt && \
 COPY . .
 
 
-# Expose port
-EXPOSE 8080
+# Expose ports
+EXPOSE 8080 8081
 
-# Run FastAPI with uvicorn (production — no --reload, multi-worker)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+# Make startup script executable
+RUN chmod +x start.sh
+
+# Start FastAPI (8080) + Streamlit (8081) together
+CMD ["bash", "start.sh"]

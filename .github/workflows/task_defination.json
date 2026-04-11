@@ -18,6 +18,13 @@
             "protocol": "tcp",
             "name": "multidocchat-container-8080-tcp",
             "appProtocol": "http"
+          },
+          {
+            "containerPort": 8081,
+            "hostPort": 8081,
+            "protocol": "tcp",
+            "name": "multidocchat-container-8081-tcp",
+            "appProtocol": "http"
           }
         ],
         "environment": [
