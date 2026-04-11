@@ -21,15 +21,22 @@
           }
         ],
         "environment": [
-          {
-            "name": "ENV",
-            "value": "production"
-          }
+          { "name": "ENV",           "value": "production" },
+          { "name": "LLM_PROVIDER",  "value": "groq" },
+          { "name": "AWS_REGION",    "value": "us-east-1" },
+          { "name": "S3_BUCKET",     "value": "multidocchat-storage" },
+          { "name": "DYNAMO_TABLE",  "value": "multidocchat-sessions" },
+          { "name": "SQS_QUEUE_URL", "value": "https://sqs.us-east-1.amazonaws.com/178371639717/multidocchat-jobs" },
+          { "name": "PINECONE_INDEX","value": "multidocchat" }
         ],
         "secrets": [
           {
             "name": "apikeyliveclass",
             "valueFrom": "arn:aws:secretsmanager:us-east-1:178371639717:secret:multidocchat-secrets-9yzC7K"
+          },
+          {
+            "name": "PINECONE_API_KEY",
+            "valueFrom": "arn:aws:secretsmanager:us-east-1:178371639717:secret:multidocchat-secrets-9yzC7K:PINECONE_API_KEY::"
           }
         ],
         "logConfiguration": {

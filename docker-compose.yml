@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Local dev stack — mirrors the production architecture exactly.
+#
+# Services:
+#   app        — FastAPI API server  (http://localhost:8080)
+#   ui         — Streamlit frontend  (http://localhost:8501)
+#   worker     — SQS consumer / ingestion pipeline
+#   localstack — fake S3 + SQS      (http://localhost:4566)
+#
+# Pinecone always uses the real free-tier API — no local emulator exists.
+#
+# Usage:
+#   docker compose up --build          # start everything
+#   docker compose up --build app ui   # start only API + UI
+#   docker compose logs -f worker      # tail worker logs
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-aws-local: &aws-local
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+  S3_BUCKET: multidocchat-local
+  SQS_QUEUE_URL: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/multidocchat-jobs
+  DYNAMO_TABLE: multidocchat-sessions
+
+x-app-env: &app-env
+  <<: *aws-local
+  ENV: local
+  LLM_PROVIDER: groq
+  TRANSFORMERS_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+
+services:
+  # ── API server ──────────────────────────────────────────────────────────────
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env           # GROQ_API_KEY, GOOGLE_API_KEY, PINECONE_API_KEY
+    environment:
+      <<: *app-env
+    depends_on:
+      localstack:
+        condition: service_healthy
+    volumes:
+      - .:/app               # hot-reload: code changes reflect immediately
+    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+
+  # ── Streamlit UI ────────────────────────────────────────────────────────────
+  ui:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      API_URL: http://app:8080        # Streamlit talks to FastAPI inside Docker network
+    depends_on:
+      - app
+    volumes:
+      - .:/app
+    command: streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+
+  # ── SQS worker (ingestion pipeline) ─────────────────────────────────────────
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      <<: *app-env
+    depends_on:
+      localstack:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: python worker.py
+
+  # ── LocalStack (fake S3 + SQS) ───────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,sqs,dynamodb
+      DEFAULT_REGION: us-east-1
+      EAGER_SERVICE_LOADING: 1
+    volumes:
+      - "./init-localstack.sh:/etc/localstack/init/ready.d/init-localstack.sh"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s

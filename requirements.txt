@@ -22,3 +22,11 @@ Jinja2==3.1.4
 langsmith
 openai
 pandas
+
+boto3>=1.35.0
+langchain-pinecone==0.2.0
+streamlit>=1.35.0
+sentence-transformers>=3.0.0
+pdf2image>=1.17.0
+pytesseract>=0.3.10
+Pillow>=10.0.0

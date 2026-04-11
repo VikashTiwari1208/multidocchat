@@ -1,6 +1,6 @@
 embedding_model:
-  provider: "google"
-  model_name: "models/gemini-embedding-001"
+  provider: "huggingface"
+  model_name: "BAAI/bge-base-en-v1.5"
 
 retriever:
   top_k: 10

@@ -1,41 +1,62 @@
-# Python cache & virtualenv
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.so
 *.pyd
 *.pyo
-env/
-.venv/
 *.egg-info/
 *.egg
-*.log
+dist/
+build/
 
-# OS & editor files
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+env/
+venv/
+
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+
+# ── Local AI assistant config (IDE-specific, not for teammates) ───────────────
+.claude/
+.cursor/
+.cursorrules
+.windsurfrules
+.opencode.json
+.mcp.json
+.code-review-graph/
+AGENTS.md
+GEMINI.md
+
+# ── OS & editor files ─────────────────────────────────────────────────────────
 .DS_Store
 .vscode/
 .idea/
+Thumbs.db
 
-# LangChain-related
+# ── LangChain / FAISS local indexes (generated, not source) ──────────────────
 faiss_index/
 *.faiss
 *.pkl
 
-# Data & archive
+# ── Uploaded documents & local temp data ─────────────────────────────────────
 data/
 archive/
 main_archive/
 *.pdf
+*.docx
 
-# Secrets & configs
-.env
-.env.*
-
-# Logs
+# ── Logs ─────────────────────────────────────────────────────────────────────
 logs/
 *.log
 
-# Build/Dist
-dist/
-build/
+# ── Test artifacts ────────────────────────────────────────────────────────────
+.pytest_cache/
+testing-jenkins-trigger.txt
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
 multi_doc_chat.egg-info/
 flow.excalidraw

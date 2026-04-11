@@ -1,9 +1,13 @@
 import os
 import sys
 import json
+import warnings
 from dotenv import load_dotenv
 from multi_doc_chat.utils.config_loader import load_config
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
 from multi_doc_chat.exception.custom_exception import DocumentPortalException
@@ -11,7 +15,8 @@ from multi_doc_chat.exception.custom_exception import DocumentPortalException
 
 
 class ApiKeyManager:
-    REQUIRED_KEYS = ["GROQ_API_KEY", "GOOGLE_API_KEY"]
+    REQUIRED_KEYS = ["GROQ_API_KEY"]
+    OPTIONAL_KEYS = ["GOOGLE_API_KEY"]
 
     def __init__(self):
         self.api_keys = {}
@@ -30,14 +35,14 @@ class ApiKeyManager:
 
 
 
-        for key in self.REQUIRED_KEYS:
+        for key in self.REQUIRED_KEYS + self.OPTIONAL_KEYS:
             if not self.api_keys.get(key):
                 env_val = os.getenv(key)
                 if env_val:
                     self.api_keys[key] = env_val
                     log.info(f"Loaded {key} from individual env var")
 
-        # Final check
+        # Final check — only required keys must be present
         missing = [k for k in self.REQUIRED_KEYS if not self.api_keys.get(k)]
         if missing:
             log.error("Missing required API keys", missing_keys=missing)
@@ -72,13 +77,28 @@ class ModelLoader:
 
     def load_embeddings(self):
         """
-        Load and return embedding model from Google Generative AI.
+        Load and return embedding model.
+        Uses HuggingFace sentence-transformers locally (no API key, no rate limits).
+        BAAI/bge-base-en-v1.5 → 768 dimensions (matches Pinecone index).
         """
         try:
             model_name = self.config["embedding_model"]["model_name"]
-            log.info("Loading embedding model", model=model_name)
-            return GoogleGenerativeAIEmbeddings(model=model_name,
-                                                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY")) #type: ignore
+            provider = self.config["embedding_model"].get("provider", "huggingface")
+            log.info("Loading embedding model", provider=provider, model=model_name)
+
+            if provider == "huggingface":
+                return HuggingFaceEmbeddings(
+                    model_name=model_name,
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True},
+                )
+
+            # Fallback: Google Generative AI (requires GOOGLE_API_KEY)
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            return GoogleGenerativeAIEmbeddings(
+                model=model_name,
+                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),  # type: ignore
+            )
         except Exception as e:
             log.error("Error loading embedding model", error=str(e))
             raise DocumentPortalException("Failed to load embedding model", sys)

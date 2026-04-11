@@ -9,6 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.vectorstores import FAISS
 
 from multi_doc_chat.utils.model_loader import ModelLoader
+from multi_doc_chat.utils.pinecone_store import get_pinecone_vectorstore
 from multi_doc_chat.exception.custom_exception import DocumentPortalException
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
 from multi_doc_chat.prompts.prompt_library import PROMPT_REGISTRY
@@ -51,6 +52,52 @@ class ConversationalRAG:
             raise DocumentPortalException("Initialization error in ConversationalRAG", sys)
 
     # ---------- Public API ----------
+
+    def load_retriever_from_pinecone(
+        self,
+        session_id: str,
+        k: int = 5,
+        search_type: str = "mmr",
+        fetch_k: int = 20,
+        lambda_mult: float = 0.5,
+        embeddings=None,
+    ):
+        """
+        Build a retriever from a Pinecone namespace (cloud / production path).
+
+        Args:
+            session_id: Used as the Pinecone namespace to isolate per-user docs
+            k: Number of documents to return
+            search_type: "similarity" or "mmr"
+            fetch_k: Docs fetched before MMR re-ranking (MMR only)
+            lambda_mult: MMR diversity param (0=max diversity, 1=max relevance)
+            embeddings: Optional pre-loaded embeddings (pass to avoid reloading model)
+        """
+        try:
+            if embeddings is None:
+                embeddings = ModelLoader().load_embeddings()
+            vectorstore = get_pinecone_vectorstore(embeddings, namespace=session_id)
+
+            search_kwargs: dict = {"k": k}
+            if search_type == "mmr":
+                search_kwargs["fetch_k"] = fetch_k
+                search_kwargs["lambda_mult"] = lambda_mult
+
+            self.retriever = vectorstore.as_retriever(
+                search_type=search_type,
+                search_kwargs=search_kwargs,
+            )
+            self._build_lcel_chain()
+            log.info(
+                "Pinecone retriever loaded",
+                session_id=session_id,
+                search_type=search_type,
+                k=k,
+            )
+            return self.retriever
+        except Exception as e:
+            log.error("Failed to load Pinecone retriever", error=str(e))
+            raise DocumentPortalException("Pinecone retriever error in ConversationalRAG", sys)
 
     def load_retriever_from_faiss(
         self,
