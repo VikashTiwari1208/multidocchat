@@ -1,36 +1,43 @@
 name: CI/CD to ECS Fargate
 on:
   workflow_run:
-    workflows: ["CI"] # Must match the "name" field in ci.yml
+    workflows: ["CI"]
     branches:
       - main
       - DeployOnAWS
     types:
       - completed
   workflow_call:
+
 env:
-  AWS_REGION: us-east-1                              # change region if needed
-  ECR_REPOSITORY: multidocchat-repo                  # YOUR ECR repo name
-  ECS_SERVICE: multidocchat-service                  # YOUR ECS service name
-  ECS_CLUSTER: multidocchat-cluster                  # YOUR ECS cluster name
-  ECS_TASK_DEFINITION: .github/workflows/task_defination.json
-  CONTAINER_NAME: multidocchat-container             # YOUR container name
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: multidocchat-repo
+  ECS_CLUSTER: multidocchat-cluster
+
+  # App (FastAPI)
+  ECS_SERVICE:          multidocchat-service
+  ECS_TASK_DEFINITION:  .github/workflows/task_defination.json
+  CONTAINER_NAME:       multidocchat-container
+
+  # Worker (SQS consumer)
+  ECS_WORKER_SERVICE:         multidocchat-worker-service
+  ECS_WORKER_TASK_DEFINITION: .github/workflows/task_definition_worker.json
+  WORKER_CONTAINER_NAME:      multidocchat-worker-container
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
+  # ── Gate: only proceed if CI passed ─────────────────────────────────────────
   check-status:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
     steps:
-      - name: CI passed on main branch
-        run: echo "CI passed on main branch, proceeding to build and deploy."
+      - name: CI passed — proceeding to deploy
+        run: echo "CI passed on main branch."
 
-  # -------------------------------
-  # 1. Build & Push Docker Image
-  # -------------------------------
+  # ── Build & push ONE image (shared by app + worker) ─────────────────────────
   build-and-push:
     name: Build & Push Docker Image
     needs: [check-status]
@@ -61,16 +68,13 @@ jobs:
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-  # -------------------------------
-  # 2. Deploy to ECS
-  # -------------------------------
-  deploy:
-    name: Deploy to ECS Fargate
+  # ── Deploy API (FastAPI) ─────────────────────────────────────────────────────
+  deploy-app:
+    name: Deploy API to ECS
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
@@ -86,21 +90,59 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Render Task Definition
-        id: render-task
+      - name: Render App Task Definition
+        id: render-app-task
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ needs.build-and-push.outputs.image }}
-      - name: Print Rendered Task
-        run: cat ${{ steps.render-task.outputs.task-definition }}
-      - name: Deploy to ECS
+
+      - name: Deploy App to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
-          task-definition: ${{ steps.render-task.outputs.task-definition }}
+          task-definition: ${{ steps.render-app-task.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
-      - name: Done!
-        run: echo "Deployed to ECS Fargate Successfully"
+
+  # ── Deploy Worker (SQS consumer) ────────────────────────────────────────────
+  deploy-worker:
+    name: Deploy Worker to ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render Worker Task Definition
+        id: render-worker-task
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_WORKER_TASK_DEFINITION }}
+          container-name: ${{ env.WORKER_CONTAINER_NAME }}
+          image: ${{ needs.build-and-push.outputs.image }}
+
+      - name: Deploy Worker to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-worker-task.outputs.task-definition }}
+          service: ${{ env.ECS_WORKER_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  done:
+    name: Done
+    needs: [deploy-app, deploy-worker]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "App + Worker deployed to ECS Fargate successfully"
