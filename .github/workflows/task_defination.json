@@ -2,6 +2,7 @@
     "family": "multidocchat-task",
     "networkMode": "awsvpc",
     "executionRoleArn": "arn:aws:iam::178371639717:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::178371639717:role/ecsTaskRole",
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "256",
     "memory": "512",
