@@ -69,7 +69,7 @@ def stub_model_loader(monkeypatch):
         def __init__(self):
             self.api_key_mgr = FakeApiKeyMgr()
             self.config = {
-                "embedding_model": {"provider": "huggingface", "model_name": "fake-embed"},
+                "embedding_model": {"provider": "google", "model_name": "fake-embed"},
                 "llm": {
                     "groq": {
                         "provider": "groq",

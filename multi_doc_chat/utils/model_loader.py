@@ -4,10 +4,7 @@ import json
 import warnings
 from dotenv import load_dotenv
 from multi_doc_chat.utils.config_loader import load_config
-from langchain_google_genai import ChatGoogleGenerativeAI
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
 from multi_doc_chat.exception.custom_exception import DocumentPortalException
@@ -78,26 +75,28 @@ class ModelLoader:
     def load_embeddings(self):
         """
         Load and return embedding model.
-        Uses HuggingFace sentence-transformers locally (no API key, no rate limits).
-        BAAI/bge-base-en-v1.5 → 768 dimensions (matches Pinecone index).
+        Uses Google Gemini embeddings (API-based, no RAM overhead).
+        models/gemini-embedding-001 → 768 dimensions (matches Pinecone index).
         """
         try:
             model_name = self.config["embedding_model"]["model_name"]
-            provider = self.config["embedding_model"].get("provider", "huggingface")
+            provider = self.config["embedding_model"].get("provider", "google")
             log.info("Loading embedding model", provider=provider, model=model_name)
 
-            if provider == "huggingface":
-                return HuggingFaceEmbeddings(
-                    model_name=model_name,
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"normalize_embeddings": True},
+            if provider == "google":
+                return GoogleGenerativeAIEmbeddings(
+                    model=model_name,
+                    google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),  # type: ignore
                 )
 
-            # Fallback: Google Generative AI (requires GOOGLE_API_KEY)
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            return GoogleGenerativeAIEmbeddings(
-                model=model_name,
-                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),  # type: ignore
+            # Fallback: HuggingFace (requires sentence-transformers + torch)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                from langchain_community.embeddings import HuggingFaceEmbeddings
+            return HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
             )
         except Exception as e:
             log.error("Error loading embedding model", error=str(e))

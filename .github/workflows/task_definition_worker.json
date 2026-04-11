@@ -3,13 +3,13 @@
   "networkMode": "awsvpc",
   "executionRoleArn": "arn:aws:iam::178371639717:role/ecsTaskExecutionRole",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "1024",
-  "memory": "8192",
+  "cpu": "512",
+  "memory": "1024",
   "containerDefinitions": [
     {
       "name": "multidocchat-worker-container",
       "image": "178371639717.dkr.ecr.us-east-1.amazonaws.com/multidocchat-repo",
-      "cpu": 1024,
+      "cpu": 512,
       "essential": true,
       "command": ["python", "worker.py"],
       "environment": [
@@ -20,8 +20,7 @@
         { "name": "DYNAMO_TABLE",    "value": "multidocchat-sessions" },
         { "name": "SQS_QUEUE_URL",   "value": "https://sqs.us-east-1.amazonaws.com/178371639717/multidocchat-jobs" },
         { "name": "PINECONE_INDEX",  "value": "multidocchat" },
-        { "name": "TRANSFORMERS_OFFLINE", "value": "1" },
-        { "name": "HF_DATASETS_OFFLINE",  "value": "1" }
+        { "name": "EMBEDDING_PROVIDER",  "value": "google" }
       ],
       "secrets": [
         {

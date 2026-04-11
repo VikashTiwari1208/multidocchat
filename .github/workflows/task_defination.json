@@ -3,13 +3,13 @@
     "networkMode": "awsvpc",
     "executionRoleArn": "arn:aws:iam::178371639717:role/ecsTaskExecutionRole",
     "requiresCompatibilities": ["FARGATE"],
-    "cpu": "1024",
-    "memory": "8192",
+    "cpu": "256",
+    "memory": "512",
     "containerDefinitions": [
       {
         "name": "multidocchat-container",
         "image": "178371639717.dkr.ecr.us-east-1.amazonaws.com/multidocchat-repo",
-        "cpu": 1024,
+        "cpu": 256,
         "essential": true,
         "portMappings": [
           {
