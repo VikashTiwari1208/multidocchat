@@ -97,7 +97,7 @@ def process_job(body: dict) -> None:
 
         # 4. Embed + upsert to Pinecone
         model_loader = ModelLoader()
-        embeddings = model_loader.load_embeddings()
+        embeddings = model_loader.load_embeddings(task_type="retrieval_document")
         indexed = ingest_documents(chunks, embeddings, session_id=session_id)
         log.info("Vectors upserted to Pinecone", indexed=indexed, session_id=session_id)
 

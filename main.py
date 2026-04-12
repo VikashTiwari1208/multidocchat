@@ -144,7 +144,7 @@ async def upload(files: List[UploadFile] = File(...)) -> UploadResponse:
         tmp_path.unlink(missing_ok=True)
 
         # Create session in DynamoDB with status=processing
-        DynamoSessionStore().create_session(session_id, s3_key, filename=filename)
+        DynamoSessionStore().create_session(session_id, s3_key)
 
         # Enqueue ingestion job for the worker
         _enqueue_job(session_id, s3_key, filename)
@@ -162,7 +162,7 @@ async def upload(files: List[UploadFile] = File(...)) -> UploadResponse:
 
 @app.get("/sessions")
 def list_sessions():
-    """Return all active (non-expired) sessions for the document switcher."""
+    """Return all active sessions from DynamoDB."""
     return {"sessions": DynamoSessionStore().list_sessions()}
 
 

@@ -72,21 +72,26 @@ class ModelLoader:
         log.info("YAML config loaded", config_keys=list(self.config.keys()))
 
 
-    def load_embeddings(self):
+    def load_embeddings(self, task_type: str = "retrieval_document"):
         """
         Load and return embedding model.
         Uses Google Gemini embeddings (API-based, no RAM overhead).
-        models/gemini-embedding-001 → 768 dimensions (matches Pinecone index).
+        models/gemini-embedding-001 → 3072 dimensions.
+
+        Args:
+            task_type: Gemini task type — use "retrieval_document" when indexing,
+                       "retrieval_query" when embedding a user query.
         """
         try:
             model_name = self.config["embedding_model"]["model_name"]
             provider = self.config["embedding_model"].get("provider", "google")
-            log.info("Loading embedding model", provider=provider, model=model_name)
+            log.info("Loading embedding model", provider=provider, model=model_name, task_type=task_type)
 
             if provider == "google":
                 return GoogleGenerativeAIEmbeddings(
                     model=model_name,
                     google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),  # type: ignore
+                    task_type=task_type,
                 )
 
             # Fallback: HuggingFace (requires sentence-transformers + torch)

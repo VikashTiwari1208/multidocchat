@@ -1,12 +1,13 @@
 import sys
-import os
 from operator import itemgetter
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.vectorstores import FAISS
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 
 from multi_doc_chat.utils.model_loader import ModelLoader
 from multi_doc_chat.utils.pinecone_store import get_pinecone_vectorstore
@@ -19,19 +20,16 @@ from pydantic import ValidationError
 
 class ConversationalRAG:
     """
-    LCEL-based Conversational RAG with lazy retriever initialization.
+    LCEL-based Conversational RAG using Pinecone as the vector store.
 
-    Usage:
-        rag = ConversationalRAG(session_id="abc")
-        rag.load_retriever_from_faiss(index_path="faiss_index/abc", k=5, index_name="index")
-        answer = rag.invoke("What is ...?", chat_history=[])
+    Pipeline:
+        question rewriter → MultiQueryRetriever → ContextualCompression → LLM answer
     """
 
     def __init__(self, session_id: Optional[str], retriever=None):
         try:
             self.session_id = session_id
 
-            # Load LLM and prompts once
             self.llm = self._load_llm()
             self.contextualize_prompt: ChatPromptTemplate = PROMPT_REGISTRY[
                 PromptType.CONTEXTUALIZE_QUESTION.value
@@ -40,7 +38,6 @@ class ConversationalRAG:
                 PromptType.CONTEXT_QA.value
             ]
 
-            # Lazy pieces
             self.retriever = retriever
             self.chain = None
             if self.retriever is not None:
@@ -63,7 +60,7 @@ class ConversationalRAG:
         embeddings=None,
     ):
         """
-        Build a retriever from a Pinecone namespace (cloud / production path).
+        Build a retriever from a Pinecone namespace.
 
         Args:
             session_id: Used as the Pinecone namespace to isolate per-user docs
@@ -71,11 +68,11 @@ class ConversationalRAG:
             search_type: "similarity" or "mmr"
             fetch_k: Docs fetched before MMR re-ranking (MMR only)
             lambda_mult: MMR diversity param (0=max diversity, 1=max relevance)
-            embeddings: Optional pre-loaded embeddings (pass to avoid reloading model)
+            embeddings: Optional pre-loaded embeddings (avoids reloading the model)
         """
         try:
             if embeddings is None:
-                embeddings = ModelLoader().load_embeddings()
+                embeddings = ModelLoader().load_embeddings(task_type="retrieval_query")
             vectorstore = get_pinecone_vectorstore(embeddings, namespace=session_id)
 
             search_kwargs: dict = {"k": k}
@@ -88,106 +85,30 @@ class ConversationalRAG:
                 search_kwargs=search_kwargs,
             )
             self._build_lcel_chain()
-            log.info(
-                "Pinecone retriever loaded",
-                session_id=session_id,
-                search_type=search_type,
-                k=k,
-            )
+            log.info("Pinecone retriever loaded", session_id=session_id, search_type=search_type, k=k)
             return self.retriever
         except Exception as e:
             log.error("Failed to load Pinecone retriever", error=str(e))
             raise DocumentPortalException("Pinecone retriever error in ConversationalRAG", sys)
-
-    def load_retriever_from_faiss(
-        self,
-        index_path: str,
-        k: int = 5,
-        index_name: str = "index",
-        search_type: str = "mmr",
-        fetch_k: int = 20,
-        lambda_mult: float = 0.5,
-        search_kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Load FAISS vectorstore from disk and build retriever + LCEL chain.
-        
-        Args:
-            index_path: Path to FAISS index directory
-            k: Number of documents to return
-            index_name: Name of the index file
-            search_type: Type of search ("similarity", "mmr", "similarity_score_threshold")
-            fetch_k: Number of documents to fetch before MMR re-ranking (only for MMR)
-            lambda_mult: Diversity parameter for MMR (0=max diversity, 1=max relevance)
-            search_kwargs: Custom search kwargs (overrides other parameters if provided)
-        """
-        try:
-            if not os.path.isdir(index_path):
-                raise FileNotFoundError(f"FAISS index directory not found: {index_path}")
-
-            embeddings = ModelLoader().load_embeddings()
-            vectorstore = FAISS.load_local(
-                index_path,
-                embeddings,
-                index_name=index_name,
-                allow_dangerous_deserialization=True,  # ok if you trust the index
-            )
-
-            if search_kwargs is None:
-                search_kwargs = {"k": k}
-                if search_type == "mmr":
-                    search_kwargs["fetch_k"] = fetch_k
-                    search_kwargs["lambda_mult"] = lambda_mult
-
-            self.retriever = vectorstore.as_retriever(
-                search_type=search_type, search_kwargs=search_kwargs
-            )
-            self._build_lcel_chain()
-
-            log.info(
-                "FAISS retriever loaded successfully",
-                index_path=index_path,
-                index_name=index_name,
-                search_type=search_type,
-                k=k,
-                fetch_k=fetch_k if search_type == "mmr" else None,
-                lambda_mult=lambda_mult if search_type == "mmr" else None,
-                session_id=self.session_id,
-            )
-            return self.retriever
-
-        except Exception as e:
-            log.error("Failed to load retriever from FAISS", error=str(e))
-            raise DocumentPortalException("Loading error in ConversationalRAG", sys)
 
     def invoke(self, user_input: str, chat_history: Optional[List[BaseMessage]] = None) -> str:
         """Invoke the LCEL pipeline."""
         try:
             if self.chain is None:
                 raise DocumentPortalException(
-                    "RAG chain not initialized. Call load_retriever_from_faiss() before invoke().", sys
+                    "RAG chain not initialized. Call load_retriever_from_pinecone() before invoke().", sys
                 )
             chat_history = chat_history or []
-            payload = {"input": user_input, "chat_history": chat_history}
-            answer = self.chain.invoke(payload)
+            answer = self.chain.invoke({"input": user_input, "chat_history": chat_history})
             if not answer:
-                log.warning(
-                    "No answer generated", user_input=user_input, session_id=self.session_id
-                )
+                log.warning("No answer generated", user_input=user_input, session_id=self.session_id)
                 return "no answer generated."
-            # Validate answer type and length using Pydantic model
             try:
-                validated = ChatAnswer(answer=str(answer))
-                answer = validated.answer
+                answer = ChatAnswer(answer=str(answer)).answer
             except ValidationError as ve:
                 log.error("Invalid chat answer", error=str(ve))
                 raise DocumentPortalException("Invalid chat answer", sys)
-            log.info(
-                "Chain invoked successfully",
-                session_id=self.session_id,
-                user_input=user_input,
-                answer_preview=str(answer)[:150],
-            )
+            log.info("Chain invoked successfully", session_id=self.session_id, answer_preview=str(answer)[:150])
             return answer
         except Exception as e:
             log.error("Failed to invoke ConversationalRAG", error=str(e))
@@ -215,7 +136,7 @@ class ConversationalRAG:
             if self.retriever is None:
                 raise DocumentPortalException("No retriever set before building chain", sys)
 
-            # 1) Rewrite user question with chat history context
+            # 1) Rewrite question as standalone (resolves pronouns, chat history context)
             question_rewriter = (
                 {"input": itemgetter("input"), "chat_history": itemgetter("chat_history")}
                 | self.contextualize_prompt
@@ -223,10 +144,24 @@ class ConversationalRAG:
                 | StrOutputParser()
             )
 
-            # 2) Retrieve docs for rewritten question
-            retrieve_docs = question_rewriter | self.retriever | self._format_docs
+            # 2) MultiQueryRetriever — generates 3 query variants, retrieves for each,
+            #    deduplicates → better recall on vague or ambiguous questions
+            multi_query_retriever = MultiQueryRetriever.from_llm(
+                retriever=self.retriever,
+                llm=self.llm,
+            )
 
-            # 3) Answer using retrieved context + original input + chat history
+            # 3) ContextualCompression — strips irrelevant sentences from each chunk
+            #    before passing to LLM → less noise, fewer tokens, better answers
+            compressor = LLMChainExtractor.from_llm(self.llm)
+            compressed_retriever = ContextualCompressionRetriever(
+                base_compressor=compressor,
+                base_retriever=multi_query_retriever,
+            )
+
+            # 4) Full chain: rewrite → retrieve → compress → answer
+            retrieve_docs = question_rewriter | compressed_retriever | self._format_docs
+
             self.chain = (
                 {
                     "context": retrieve_docs,
@@ -238,7 +173,7 @@ class ConversationalRAG:
                 | StrOutputParser()
             )
 
-            log.info("LCEL graph built successfully", session_id=self.session_id)
+            log.info("LCEL chain built successfully", session_id=self.session_id)
         except Exception as e:
             log.error("Failed to build LCEL chain", error=str(e), session_id=self.session_id)
             raise DocumentPortalException("Failed to build LCEL chain", sys)

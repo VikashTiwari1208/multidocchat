@@ -91,9 +91,7 @@ def stub_model_loader(monkeypatch):
     monkeypatch.setattr(ml_mod2, "ApiKeyManager", FakeApiKeyMgr)
     monkeypatch.setattr(ml_mod2, "ModelLoader", FakeModelLoader)
 
-    import multi_doc_chat.src.document_ingestion.data_ingestion as di
     import multi_doc_chat.src.document_chat.retrieval as r
-    monkeypatch.setattr(di, "ModelLoader", FakeModelLoader)
     monkeypatch.setattr(r, "ModelLoader", FakeModelLoader)
     yield FakeModelLoader
 
