@@ -127,15 +127,14 @@ with st.sidebar:
     else:
         for s in ready_sessions:
             is_active = s["session_id"] == st.session_state.session_id
-            label = f"{'▶ ' if is_active else ''}{s['filename']}"
-            # Show creation time nicely
+            filename = s.get("filename") or "Unnamed document"
             created = s.get("created_at", "")[:16].replace("T", " ") if s.get("created_at") else ""
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.markdown(
-                    f"**{label}**" if is_active else label,
-                    help=f"Uploaded: {created}" if created else None,
-                )
+                if is_active:
+                    st.markdown(f"▶ **{filename}**", help=f"Uploaded: {created}" if created else None)
+                else:
+                    st.markdown(filename, help=f"Uploaded: {created}" if created else None)
             with col2:
                 if not is_active:
                     if st.button("Switch", key=f"sw_{s['session_id']}", use_container_width=True):
