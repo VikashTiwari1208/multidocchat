@@ -35,7 +35,10 @@
           { "name": "S3_BUCKET",     "value": "multidocchat-storage" },
           { "name": "DYNAMO_TABLE",  "value": "multidocchat-sessions" },
           { "name": "SQS_QUEUE_URL", "value": "https://sqs.us-east-1.amazonaws.com/178371639717/multidocchat-jobs" },
-          { "name": "PINECONE_INDEX","value": "multidocchat" }
+          { "name": "PINECONE_INDEX",           "value": "multidocchat" },
+          { "name": "LANGCHAIN_TRACING_V2",    "value": "true" },
+          { "name": "LANGCHAIN_ENDPOINT",      "value": "https://api.smith.langchain.com" },
+          { "name": "LANGCHAIN_PROJECT",       "value": "multidocchat" }
         ],
         "secrets": [
           {
@@ -45,6 +48,10 @@
           {
             "name": "PINECONE_API_KEY",
             "valueFrom": "arn:aws:secretsmanager:us-east-1:178371639717:secret:multidocchat-secrets-9yzC7K:PINECONE_API_KEY::"
+          },
+          {
+            "name": "LANGSMITH_API_KEY",
+            "valueFrom": "arn:aws:secretsmanager:us-east-1:178371639717:secret:multidocchat-secrets-9yzC7K:LANGSMITH_API_KEY::"
           }
         ],
         "logConfiguration": {
