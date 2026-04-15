@@ -30,6 +30,9 @@ RUN uv pip install --system -r requirements.txt && \
 # Pre-bake FlashrankRerank model (~80MB) so the first request doesn't stall
 RUN python -c "from flashrank import Ranker; Ranker(model_name='ms-marco-MultiBERT-L-12')"
 
+# Pre-download NLTK data required by BM25Encoder.default()
+RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
+
 # Copy project files
 COPY . .
 
