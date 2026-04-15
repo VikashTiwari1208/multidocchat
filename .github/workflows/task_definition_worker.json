@@ -20,7 +20,7 @@
         { "name": "S3_BUCKET",       "value": "multidocchat-storage" },
         { "name": "DYNAMO_TABLE",    "value": "multidocchat-sessions" },
         { "name": "SQS_QUEUE_URL",   "value": "https://sqs.us-east-1.amazonaws.com/178371639717/multidocchat-jobs" },
-        { "name": "PINECONE_INDEX",  "value": "multidocchat" },
+        { "name": "PINECONE_INDEX",  "value": "multidocchat-v2" },
         { "name": "EMBEDDING_PROVIDER",  "value": "google" }
       ],
       "secrets": [
