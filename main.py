@@ -32,7 +32,7 @@ def get_embeddings():
     global _embeddings
     if _embeddings is None:
         log.info("Loading embedding model into cache (first request)")
-        _embeddings = ModelLoader().load_embeddings()
+        _embeddings = ModelLoader().load_embeddings(task_type="retrieval_query")
     return _embeddings
 
 
@@ -144,7 +144,7 @@ async def upload(files: List[UploadFile] = File(...)) -> UploadResponse:
         tmp_path.unlink(missing_ok=True)
 
         # Create session in DynamoDB with status=processing
-        DynamoSessionStore().create_session(session_id, s3_key)
+        DynamoSessionStore().create_session(session_id, s3_key, filename=filename)
 
         # Enqueue ingestion job for the worker
         _enqueue_job(session_id, s3_key, filename)

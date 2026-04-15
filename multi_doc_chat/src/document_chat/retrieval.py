@@ -30,6 +30,10 @@ from multi_doc_chat.model.models import PromptType, ChatAnswer
 _CONFIG_PATH = Path(__file__).parents[2] / "config" / "config.yaml"
 _cfg = yaml.safe_load(_CONFIG_PATH.read_text())
 
+# Initialise once at import time — BM25Encoder.default() downloads NLTK data
+# on first call; re-instantiating it on every query adds unnecessary latency.
+_bm25_encoder = BM25Encoder.default()
+
 
 # ── Hybrid retriever ──────────────────────────────────────────────────────────
 
@@ -55,9 +59,8 @@ class ParentFetchingHybridRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> List[Document]:
-        encoder = BM25Encoder.default()
         dense = self.embeddings.embed_query(query)
-        sparse = encoder.encode_queries(query)
+        sparse = _bm25_encoder.encode_queries(query)
         hdense, hsparse = hybrid_convex_scale(dense, sparse, alpha=self.alpha)
 
         results = _pinecone_index().query(
