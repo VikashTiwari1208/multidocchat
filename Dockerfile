@@ -27,6 +27,9 @@ COPY requirements.txt ./
 RUN uv pip install --system -r requirements.txt && \
     uv pip uninstall --system pinecone-plugin-inference pinecone-plugin-assistant 2>/dev/null || true
 
+# Pre-bake FlashrankRerank model (~80MB) so the first request doesn't stall
+RUN python -c "from flashrank import Ranker; Ranker(model_name='ms-marco-MultiBERT-L-12')"
+
 # Copy project files
 COPY . .
 

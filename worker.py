@@ -14,7 +14,7 @@ Environment variables required:
   S3_BUCKET         — S3 bucket name
   DYNAMO_TABLE      — DynamoDB table name (default: multidocchat-sessions)
   PINECONE_API_KEY  — Pinecone API key
-  PINECONE_INDEX    — Pinecone index name (default: multidocchat)
+  PINECONE_INDEX    — Pinecone index name (default: multidocchat-v2)
   GROQ_API_KEY      — required by ModelLoader
   AWS_ENDPOINT_URL  — (local only) LocalStack endpoint
 """
@@ -27,6 +27,7 @@ import tempfile
 from pathlib import Path
 
 import boto3
+import yaml
 from dotenv import load_dotenv
 
 # Load .env in local dev; in ECS secrets come from Secrets Manager env vars
@@ -35,10 +36,13 @@ load_dotenv()
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from multi_doc_chat.utils.s3_storage import S3Storage
 from multi_doc_chat.utils.dynamo_store import DynamoSessionStore, STATUS_READY, STATUS_FAILED
-from multi_doc_chat.utils.pinecone_store import ingest_documents
+from multi_doc_chat.utils.pinecone_store import ingest_documents_hybrid
 from multi_doc_chat.utils.model_loader import ModelLoader
 from multi_doc_chat.utils.document_ops import load_documents
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
+
+_CONFIG_PATH = Path(__file__).parent / "multi_doc_chat" / "config" / "config.yaml"
+_cfg = yaml.safe_load(_CONFIG_PATH.read_text())
 
 
 # SQS visibility timeout must be >= max expected processing time (seconds)
@@ -87,19 +91,39 @@ def process_job(body: dict) -> None:
                 "Upload a PDF with selectable text or a higher-quality scan."
             )
 
-        # 3. Split into chunks
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_documents(text_docs)
-        log.info("Documents split into chunks", chunks=len(chunks), session_id=session_id)
+        # 3. Two-level split: large parent chunks for context, small child chunks for retrieval
+        c = _cfg["chunking"]
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=c["parent_chunk_size"], chunk_overlap=c["parent_chunk_overlap"]
+        )
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=c["child_chunk_size"], chunk_overlap=c["child_chunk_overlap"]
+        )
 
-        if not chunks:
-            raise ValueError(f"Splitting produced 0 chunks for '{filename}'")
+        parent_chunks = parent_splitter.split_documents(text_docs)
+        child_docs, parent_map = [], {}
+        for p_idx, parent in enumerate(parent_chunks):
+            parent_id = f"parent-{session_id}-{p_idx}"
+            children = child_splitter.split_documents([parent])
+            for child in children:
+                child.metadata["parent_id"] = parent_id
+                child_docs.append(child)
+            parent_map[parent_id] = parent.page_content
 
-        # 4. Embed + upsert to Pinecone
-        model_loader = ModelLoader()
-        embeddings = model_loader.load_embeddings(task_type="retrieval_document")
-        indexed = ingest_documents(chunks, embeddings, session_id=session_id)
-        log.info("Vectors upserted to Pinecone", indexed=indexed, session_id=session_id)
+        log.info(
+            "Two-level split complete",
+            parents=len(parent_chunks),
+            children=len(child_docs),
+            session_id=session_id,
+        )
+
+        if not child_docs:
+            raise ValueError(f"Splitting produced 0 child chunks for '{filename}'")
+
+        # 4. Embed (dense + BM25 sparse) and upsert hybrid vectors to Pinecone
+        embeddings = ModelLoader().load_embeddings(task_type="retrieval_document")
+        indexed = ingest_documents_hybrid(child_docs, parent_map, embeddings, session_id=session_id)
+        log.info("Hybrid vectors upserted to Pinecone", indexed=indexed, session_id=session_id)
 
     # 4. Mark session ready — outside tempdir (file already processed)
     dynamo.set_status(session_id, STATUS_READY)

@@ -13,7 +13,8 @@ docx2txt==0.9
 pypdf>=4.0.0
 ipykernel==6.30.0
 python-multipart==0.0.20
-faiss-cpu
+pinecone-text>=0.9.0
+flashrank>=0.2.9
 
 fastapi==0.115.6
 uvicorn==0.32.1

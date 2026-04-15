@@ -1,29 +1,109 @@
-import sys
-from operator import itemgetter
-from typing import List, Optional
+from __future__ import annotations
 
+import sys
+from pathlib import Path
+from operator import itemgetter
+from typing import Any, List, Optional
+
+import yaml
+from pydantic import ValidationError
+
+from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.retrievers import BaseRetriever
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
+from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+from pinecone_text.sparse import BM25Encoder
+from pinecone_text.hybrid import hybrid_convex_scale
 
 from multi_doc_chat.utils.model_loader import ModelLoader
-from multi_doc_chat.utils.pinecone_store import get_pinecone_vectorstore
+from multi_doc_chat.utils.pinecone_store import _pinecone_index
 from multi_doc_chat.exception.custom_exception import DocumentPortalException
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
 from multi_doc_chat.prompts.prompt_library import PROMPT_REGISTRY
 from multi_doc_chat.model.models import PromptType, ChatAnswer
-from pydantic import ValidationError
 
+_CONFIG_PATH = Path(__file__).parents[2] / "config" / "config.yaml"
+_cfg = yaml.safe_load(_CONFIG_PATH.read_text())
+
+
+# ── Hybrid retriever ──────────────────────────────────────────────────────────
+
+class ParentFetchingHybridRetriever(BaseRetriever):
+    """
+    Hybrid dense+sparse Pinecone retriever that returns parent-sized chunks.
+
+    For each query:
+      1. Encode with BM25 (sparse) + Gemini (dense)
+      2. Scale with hybrid_convex_scale(alpha)
+      3. Query Pinecone (top_k * 2 to allow deduplication)
+      4. Deduplicate by parent_id → return parent_text as Document.page_content
+    """
+
+    embeddings: Any
+    session_id: str
+    k: int = 10
+    alpha: float = 0.5
+
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+    ) -> List[Document]:
+        encoder = BM25Encoder.default()
+        dense = self.embeddings.embed_query(query)
+        sparse = encoder.encode_queries(query)
+        hdense, hsparse = hybrid_convex_scale(dense, sparse, alpha=self.alpha)
+
+        results = _pinecone_index().query(
+            vector=hdense,
+            sparse_vector=hsparse,
+            top_k=self.k * 2,
+            namespace=self.session_id,
+            include_metadata=True,
+        )
+
+        seen: set = set()
+        docs: List[Document] = []
+        for m in results.get("matches", []):
+            meta = m.get("metadata", {})
+            pid = meta.get("parent_id", m["id"])
+            if pid not in seen:
+                seen.add(pid)
+                clean_meta = {key: val for key, val in meta.items() if key != "parent_text"}
+                docs.append(Document(
+                    page_content=meta.get("parent_text", meta.get("text", "")),
+                    metadata=clean_meta,
+                ))
+            if len(docs) >= self.k:
+                break
+
+        log.info(
+            "ParentFetchingHybridRetriever",
+            query_preview=query[:80],
+            returned=len(docs),
+            session_id=self.session_id,
+        )
+        return docs
+
+
+# ── Conversational RAG ────────────────────────────────────────────────────────
 
 class ConversationalRAG:
     """
     LCEL-based Conversational RAG using Pinecone as the vector store.
 
     Pipeline:
-        question rewriter → MultiQueryRetriever → ContextualCompression → LLM answer
+        question rewriter
+          → MultiQueryRetriever (3 query variants)
+          → ParentFetchingHybridRetriever (dense + BM25 sparse → parent chunks)
+          → ContextualCompressionRetriever (FlashrankRerank, local CPU, no LLM call)
+          → LLM answer
     """
 
     def __init__(self, session_id: Optional[str], retriever=None):
@@ -54,38 +134,35 @@ class ConversationalRAG:
         self,
         session_id: str,
         k: int = 5,
-        search_type: str = "mmr",
-        fetch_k: int = 20,
-        lambda_mult: float = 0.5,
         embeddings=None,
+        **_kwargs,
     ):
         """
-        Build a retriever from a Pinecone namespace.
+        Build a hybrid retriever from a Pinecone namespace.
 
         Args:
-            session_id: Used as the Pinecone namespace to isolate per-user docs
-            k: Number of documents to return
-            search_type: "similarity" or "mmr"
-            fetch_k: Docs fetched before MMR re-ranking (MMR only)
-            lambda_mult: MMR diversity param (0=max diversity, 1=max relevance)
-            embeddings: Optional pre-loaded embeddings (avoids reloading the model)
+            session_id: Pinecone namespace (isolates per-user docs)
+            k:          Number of parent documents to return after deduplication
+            embeddings: Pre-loaded embeddings (avoids reloading the model)
         """
         try:
             if embeddings is None:
                 embeddings = ModelLoader().load_embeddings(task_type="retrieval_query")
-            vectorstore = get_pinecone_vectorstore(embeddings, namespace=session_id)
 
-            search_kwargs: dict = {"k": k}
-            if search_type == "mmr":
-                search_kwargs["fetch_k"] = fetch_k
-                search_kwargs["lambda_mult"] = lambda_mult
-
-            self.retriever = vectorstore.as_retriever(
-                search_type=search_type,
-                search_kwargs=search_kwargs,
+            alpha = _cfg["reranker"]["alpha"]
+            self.retriever = ParentFetchingHybridRetriever(
+                embeddings=embeddings,
+                session_id=session_id,
+                k=k,
+                alpha=alpha,
             )
             self._build_lcel_chain()
-            log.info("Pinecone retriever loaded", session_id=session_id, search_type=search_type, k=k)
+            log.info(
+                "Hybrid Pinecone retriever loaded",
+                session_id=session_id,
+                k=k,
+                alpha=alpha,
+            )
             return self.retriever
         except Exception as e:
             log.error("Failed to load Pinecone retriever", error=str(e))
@@ -145,21 +222,27 @@ class ConversationalRAG:
             )
 
             # 2) MultiQueryRetriever — generates 3 query variants, retrieves for each,
-            #    deduplicates → better recall on vague or ambiguous questions
+            #    deduplicates → better recall on vague or ambiguous questions.
+            #    Each variant is sent through ParentFetchingHybridRetriever.
             multi_query_retriever = MultiQueryRetriever.from_llm(
                 retriever=self.retriever,
                 llm=self.llm,
             )
 
-            # 3) ContextualCompression — strips irrelevant sentences from each chunk
-            #    before passing to LLM → less noise, fewer tokens, better answers
-            compressor = LLMChainExtractor.from_llm(self.llm)
+            # 3) FlashrankRerank — local CPU re-ranker (ms-marco-MultiBERT-L-12).
+            #    Re-ranks the merged candidate parent chunks and keeps top_n.
+            #    Replaces LLMChainExtractor: no extra LLM API call, ~3× cheaper.
+            r_cfg = _cfg["reranker"]
+            compressor = FlashrankRerank(
+                model=r_cfg["model"],
+                top_n=r_cfg["top_n"],
+            )
             compressed_retriever = ContextualCompressionRetriever(
                 base_compressor=compressor,
                 base_retriever=multi_query_retriever,
             )
 
-            # 4) Full chain: rewrite → retrieve → compress → answer
+            # 4) Full chain: rewrite → hybrid retrieve → rerank → answer
             retrieve_docs = question_rewriter | compressed_retriever | self._format_docs
 
             self.chain = (

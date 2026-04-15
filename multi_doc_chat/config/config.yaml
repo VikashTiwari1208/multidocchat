@@ -9,6 +9,17 @@ retriever:
   fetch_k: 20  # Number of documents to fetch before MMR re-ranking (should be > top_k)
   lambda_mult: 0.5  # Diversity vs relevance (0=max diversity, 1=max relevance)
 
+chunking:
+  parent_chunk_size: 2000
+  parent_chunk_overlap: 200
+  child_chunk_size: 400
+  child_chunk_overlap: 50
+
+reranker:
+  model: "ms-marco-MultiBERT-L-12"
+  top_n: 5
+  alpha: 0.5   # 0=pure BM25, 1=pure dense
+
 llm:
   groq:
     provider: "groq"
