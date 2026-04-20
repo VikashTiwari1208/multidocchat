@@ -46,7 +46,7 @@ _cfg = yaml.safe_load(_CONFIG_PATH.read_text())
 
 
 # SQS visibility timeout must be >= max expected processing time (seconds)
-VISIBILITY_TIMEOUT = int(os.getenv("SQS_VISIBILITY_TIMEOUT", "600"))  # 10 min
+VISIBILITY_TIMEOUT = int(os.getenv("SQS_VISIBILITY_TIMEOUT", "3600"))  # 1 hour — large docs on free-tier Gemini need time for rate-limit retries
 POLL_WAIT_SECONDS = 20   # SQS long polling — reduces empty receive API calls
 
 

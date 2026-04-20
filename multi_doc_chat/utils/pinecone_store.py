@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os
+import re
+import time
 import uuid
 from typing import List
 
@@ -10,6 +12,48 @@ from pinecone_text.sparse import BM25Encoder
 from pinecone_text.hybrid import hybrid_convex_scale
 
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
+
+_EMBED_BATCH = 80       # stay under Gemini free-tier 100 RPM limit
+_MAX_RETRIES = 6        # max retries per batch on 429
+
+
+def _embed_with_retry(embeddings, texts: list, session_id: str) -> list:
+    """
+    Embed texts in small batches. On a 429 rate-limit response, sleep for
+    the delay suggested by the API and retry — transparent on paid tiers.
+    """
+    all_vecs: list = []
+    total_batches = (len(texts) + _EMBED_BATCH - 1) // _EMBED_BATCH
+
+    for i in range(0, len(texts), _EMBED_BATCH):
+        batch = texts[i : i + _EMBED_BATCH]
+        batch_label = f"{i // _EMBED_BATCH + 1}/{total_batches}"
+        attempt = 0
+
+        while True:
+            try:
+                all_vecs.extend(embeddings.embed_documents(batch))
+                log.info("Embedded batch", batch=batch_label, size=len(batch), session_id=session_id)
+                break
+            except Exception as exc:
+                err = str(exc)
+                is_rate_limit = "429" in err or "quota" in err.lower() or "rate" in err.lower()
+                if is_rate_limit and attempt < _MAX_RETRIES:
+                    m = re.search(r"retry in (\d+(?:\.\d+)?)", err)
+                    delay = float(m.group(1)) + 3 if m else 65
+                    log.warning(
+                        "Gemini rate limit — retrying after sleep",
+                        delay_s=delay,
+                        batch=batch_label,
+                        attempt=attempt + 1,
+                        session_id=session_id,
+                    )
+                    time.sleep(delay)
+                    attempt += 1
+                else:
+                    raise
+
+    return all_vecs
 
 
 def _pinecone_index():
@@ -69,7 +113,7 @@ def ingest_documents_hybrid(
     sparse_vecs = encoder.encode_documents(texts)
 
     log.info("Encoding dense vectors", count=len(texts), session_id=session_id)
-    dense_vecs = embeddings.embed_documents(texts)
+    dense_vecs = _embed_with_retry(embeddings, texts, session_id)
 
     index = _pinecone_index()
     batch = []
