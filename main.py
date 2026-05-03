@@ -23,9 +23,10 @@ from multi_doc_chat.src.document_ingestion.data_ingestion import generate_sessio
 from multi_doc_chat.logger import GLOBAL_LOGGER as log
 
 # ------------------------------------
-# Module-level embedding model cache
-# Loaded once on first use, reused for all requests — avoids reloading 440MB model
+# Module-level caches — loaded once, reused across all requests
 # ------------------------------------
+
+# Gemini embedding model (~440 MB) — avoids reloading on every request
 _embeddings = None
 
 def get_embeddings():
@@ -34,6 +35,24 @@ def get_embeddings():
         log.info("Loading embedding model into cache (first request)")
         _embeddings = ModelLoader().load_embeddings(task_type="retrieval_query")
     return _embeddings
+
+
+# ConversationalRAG chain cache — keyed by session_id.
+# Building the chain per request rebuilt the Groq client, LCEL pipeline, and
+# MultiQueryRetriever on every message even though none of that changes within
+# a session. chat_history is passed at call time so caching is safe.
+_rag_cache: dict[str, ConversationalRAG] = {}
+
+def get_rag(session_id: str) -> ConversationalRAG:
+    if session_id not in _rag_cache:
+        log.info("Building RAG chain for session", session_id=session_id)
+        rag = ConversationalRAG(session_id=session_id)
+        rag.load_retriever_from_pinecone(
+            session_id=session_id,
+            embeddings=get_embeddings(),
+        )
+        _rag_cache[session_id] = rag
+    return _rag_cache[session_id]
 
 
 # ----------------------------
@@ -166,6 +185,19 @@ def list_sessions():
     return {"sessions": DynamoSessionStore().list_sessions()}
 
 
+@app.get("/history/{session_id}")
+def get_history(session_id: str):
+    """
+    Return the full chat history for a session as a list of {role, content} dicts.
+    Used by the UI to reload conversation when switching between documents.
+    Returns 404 if the session does not exist.
+    """
+    dynamo = DynamoSessionStore()
+    if not dynamo.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"history": dynamo.get_history(session_id)}
+
+
 @app.get("/status/{session_id}", response_model=StatusResponse)
 def get_status(session_id: str) -> StatusResponse:
     """
@@ -195,14 +227,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail="Document still being indexed. Please wait.")
 
     try:
-        rag = ConversationalRAG(session_id=session_id)
-        rag.load_retriever_from_pinecone(
-            session_id=session_id,
-            search_type="mmr",
-            fetch_k=20,
-            lambda_mult=0.5,
-            embeddings=get_embeddings(),   # reuse cached model
-        )
+        rag = get_rag(session_id)
 
         simple = dynamo.get_history(session_id)
         lc_history = [
@@ -243,14 +268,7 @@ async def chat_stream(req: ChatRequest):
     if not dynamo.is_ready(session_id):
         raise HTTPException(status_code=400, detail="Document still being indexed.")
 
-    rag = ConversationalRAG(session_id=session_id)
-    rag.load_retriever_from_pinecone(
-        session_id=session_id,
-        search_type="mmr",
-        fetch_k=20,
-        lambda_mult=0.5,
-        embeddings=get_embeddings(),
-    )
+    rag = get_rag(session_id)
 
     simple = dynamo.get_history(session_id)
     lc_history = [

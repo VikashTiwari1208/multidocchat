@@ -16,6 +16,23 @@ from multi_doc_chat.logger import GLOBAL_LOGGER as log
 _EMBED_BATCH = 80       # stay under Gemini free-tier 100 RPM limit
 _MAX_RETRIES = 6        # max retries per batch on 429
 
+# Cached Pinecone Index — creating a new client + Index on every query costs 3
+# TCP handshakes per request (MultiQueryRetriever fires 3 query variants).
+# The Index object is stateless between queries; only the vector payload differs.
+_index_cache: "Pinecone | None" = None
+
+
+def _pinecone_index():
+    global _index_cache
+    if _index_cache is None:
+        api_key = os.getenv("PINECONE_API_KEY")
+        index_name = os.getenv("PINECONE_INDEX", "multidocchat-v2")
+        if not api_key:
+            raise ValueError("PINECONE_API_KEY env var not set")
+        _index_cache = Pinecone(api_key=api_key).Index(index_name)
+        log.info("Pinecone index connection established", index=index_name)
+    return _index_cache
+
 
 def _embed_with_retry(embeddings, texts: list, session_id: str) -> list:
     """
@@ -54,15 +71,6 @@ def _embed_with_retry(embeddings, texts: list, session_id: str) -> list:
                     raise
 
     return all_vecs
-
-
-def _pinecone_index():
-    api_key = os.getenv("PINECONE_API_KEY")
-    index_name = os.getenv("PINECONE_INDEX", "multidocchat-v2")
-    if not api_key:
-        raise ValueError("PINECONE_API_KEY env var not set")
-    pc = Pinecone(api_key=api_key)
-    return pc.Index(index_name)
 
 
 def get_pinecone_vectorstore(embeddings, namespace: str) -> PineconeVectorStore:

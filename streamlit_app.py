@@ -43,6 +43,24 @@ def fetch_sessions() -> list[dict]:
         r = requests.get(f"{API_URL}/sessions", timeout=5)
         r.raise_for_status()
         return r.json().get("sessions", [])
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        st.warning(
+            f"Backend unreachable at `{API_URL}`. "
+            "Run `docker compose up --build` to restart it. "
+            "Your documents are safe in DynamoDB.",
+            icon="⚠️",
+        )
+        return []
+    except Exception:
+        return []
+
+
+def fetch_history(session_id: str) -> list[dict]:
+    """Load chat history from the backend for a given session."""
+    try:
+        r = requests.get(f"{API_URL}/history/{session_id}", timeout=5)
+        r.raise_for_status()
+        return r.json().get("history", [])
     except Exception:
         return []
 
@@ -51,7 +69,7 @@ def switch_to(session: dict):
     st.session_state.session_id = session["session_id"]
     st.session_state.filename   = session["filename"]
     st.session_state.indexed    = session["status"] == "ready"
-    st.session_state.messages   = []   # history lives in DynamoDB; reload on next chat
+    st.session_state.messages   = fetch_history(session["session_id"])
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────

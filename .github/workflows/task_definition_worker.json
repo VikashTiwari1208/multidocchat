@@ -4,8 +4,8 @@
   "executionRoleArn": "arn:aws:iam::178371639717:role/ecsTaskExecutionRole",
   "taskRoleArn": "arn:aws:iam::178371639717:role/ecsTaskRole",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "512",
-  "memory": "1024",
+  "cpu": "1024",
+  "memory": "3072",
   "containerDefinitions": [
     {
       "name": "multidocchat-worker-container",
