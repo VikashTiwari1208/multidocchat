@@ -35,12 +35,20 @@ _cfg = yaml.safe_load(_CONFIG_PATH.read_text())
 _bm25_encoder = BM25Encoder.default()
 
 # FlashrankRerank loads a ~400 MB BERT model (ms-marco-MultiBERT-L-12).
-# Cached here for the same reason as _bm25_encoder — loading it per request
-# caused OOM crashes on large documents.
-_reranker = FlashrankRerank(
-    model=_cfg["reranker"]["model"],
-    top_n=_cfg["reranker"]["top_n"],
-)
+# Lazy-initialised on first chat request and cached — keeps startup fast and
+# prevents a model-download failure from crashing the container at boot.
+_reranker: "FlashrankRerank | None" = None
+
+
+def _get_reranker() -> FlashrankRerank:
+    global _reranker
+    if _reranker is None:
+        log.info("Loading FlashrankRerank model into cache (first request)")
+        _reranker = FlashrankRerank(
+            model=_cfg["reranker"]["model"],
+            top_n=_cfg["reranker"]["top_n"],
+        )
+    return _reranker
 
 
 # ── Hybrid retriever ──────────────────────────────────────────────────────────
@@ -244,7 +252,7 @@ class ConversationalRAG:
             #    Re-ranks the merged candidate parent chunks and keeps top_n.
             #    Replaces LLMChainExtractor: no extra LLM API call, ~3× cheaper.
             compressed_retriever = ContextualCompressionRetriever(
-                base_compressor=_reranker,
+                base_compressor=_get_reranker(),
                 base_retriever=multi_query_retriever,
             )
 
