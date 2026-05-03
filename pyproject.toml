@@ -30,6 +30,8 @@ dependencies = [
     "uvicorn==0.32.1",
     "boto3>=1.35.0",
     "langchain-pinecone==0.2.0",
+    "starlette>=0.41.0,<0.42.0",
+    "streamlit>=1.41.0",
 ]
 
 [dependency-groups]
