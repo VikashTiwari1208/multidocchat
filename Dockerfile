@@ -20,12 +20,15 @@ ENV PATH="/root/.local/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV PYTHONPATH="/app:/app/multi_doc_chat"
 
-# Copy dependency manifests for better layer caching
-COPY requirements.txt ./
+# Copy lockfile + manifests — exact versions, no PyPI resolution at build time
+COPY pyproject.toml uv.lock ./
 
-# Install dependencies
-RUN uv pip install --system -r requirements.txt && \
-    uv pip uninstall --system pinecone-plugin-inference pinecone-plugin-assistant 2>/dev/null || true
+# Install with frozen lockfile so transitive deps are identical on every build
+RUN uv sync --frozen --no-dev && \
+    uv pip uninstall pinecone-plugin-inference pinecone-plugin-assistant 2>/dev/null || true
+
+# Make the venv's binaries the default python/pip
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Pre-bake FlashrankRerank model (~80MB) so the first request doesn't stall
 RUN python -c "from flashrank import Ranker; Ranker(model_name='ms-marco-MultiBERT-L-12')"
