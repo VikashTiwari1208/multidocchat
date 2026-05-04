@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "docx2txt==0.9",
-    "fastapi==0.115.6",
+    "fastapi>=0.115.6",
     "flashrank>=0.2.9",
     "ipykernel==6.30.0",
     "jinja2==3.1.4",
@@ -30,7 +30,6 @@ dependencies = [
     "uvicorn==0.32.1",
     "boto3>=1.35.0",
     "langchain-pinecone==0.2.0",
-    "starlette>=0.41.0,<0.42.0",
     "streamlit>=1.41.0",
 ]
 
